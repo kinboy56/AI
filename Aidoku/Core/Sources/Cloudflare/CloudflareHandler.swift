@@ -76,6 +76,10 @@ actor CloudflareHandler: NSObject {
         }
 
         guard let html = String(data: data, encoding: .utf8) else { return false }
+        // origin error pages with the js detection script injected carry no challenge markers
+        if html.contains("/cdn-cgi/challenge-platform/") {
+            return true
+        }
         do {
             let doc = try SwiftSoup.parse(html)
             if try doc.getElementById("challenge-error-title") != nil {
@@ -277,20 +281,31 @@ extension CloudflareHandler {
 
     // handle web view reload/redirect
     nonisolated func navigated(webView: WKWebView, for request: URLRequest) async {
-        guard let url = request.url, let host = url.host?.lowercased() else { return }
-
         await MainActor.run {
             if self.popupController == nil {
                 // delay captcha check by 3s (so it loads in)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.checkForCaptcha(for: request)
+                    // js detection sets the clearance cookie after load without navigating
+                    Task { [weak self] in
+                        await self?.checkClearance(for: request)
+                    }
                 }
                 // try again in 5s if the first check didn't catch the captcha (dumb hack)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
                     self?.checkForCaptcha(for: request)
+                    Task { [weak self] in
+                        await self?.checkClearance(for: request)
+                    }
                 }
             }
         }
+
+        await checkClearance(for: request)
+    }
+
+    nonisolated func checkClearance(for request: URLRequest) async {
+        guard let url = request.url, let host = url.host?.lowercased() else { return }
 
         var webViewCookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
 

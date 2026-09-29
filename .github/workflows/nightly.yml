@@ -2,6 +2,9 @@ name: Build and upload nightly ipa
 
 on: [push, workflow_dispatch]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-26
@@ -31,3 +34,11 @@ jobs:
           name: Aidoku-iOS_nightly-${{ steps.commitinfo.outputs.sha_short }}.ipa
           path: Aidoku-iOS_nightly-${{ steps.commitinfo.outputs.sha_short }}.ipa
           if-no-files-found: error
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.commitinfo.outputs.sha_short }}
+        run: |
+          mv Aidoku-iOS_nightly-$SHA.ipa app-$SHA.ipa
+          gh release create "b${{ github.run_number }}-$SHA" app-$SHA.ipa \
+            --target "$GITHUB_SHA" --title "build $SHA" --notes "" --prerelease
