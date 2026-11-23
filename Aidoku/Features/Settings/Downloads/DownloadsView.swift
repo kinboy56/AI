@@ -11,8 +11,12 @@ struct DownloadsView: View {
     @StateObject private var viewModel = ViewModel()
     @EnvironmentObject private var path: NavigationCoordinator
 
+    @State private var editMode = EditMode.inactive
+    @State private var selectedManga = Set<String>()
+    @State private var showingRemoveConfirmation = false
+
     var body: some View {
-        List {
+        List(selection: $selectedManga) {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -68,10 +72,12 @@ struct DownloadsView: View {
                                 DownloadedMangaRow(manga: manga)
                             }
                             .swipeActions {
-                                Button(role: .destructive) {
-                                    viewModel.delete(manga: manga)
-                                } label: {
-                                    Label(NSLocalizedString("DELETE"), systemImage: "trash")
+                                if editMode == .inactive {
+                                    Button(role: .destructive) {
+                                        viewModel.delete(manga: manga)
+                                    } label: {
+                                        Label(NSLocalizedString("DELETE"), systemImage: "trash")
+                                    }
                                 }
                             }
                         }
@@ -80,12 +86,52 @@ struct DownloadsView: View {
             }
         }
         .refreshable {
-            await viewModel.loadDownloadedManga()
+            if editMode == .inactive {
+                await viewModel.loadDownloadedManga()
+            }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if editMode == .active {
+                    let allSelected = selectedManga.count == viewModel.downloadedManga.count
+                    Button {
+                        if allSelected {
+                            selectedManga = Set()
+                        } else {
+                            selectedManga = Set(viewModel.downloadedManga.map { $0.id })
+                        }
+                    } label: {
+                        if allSelected {
+                            Text(NSLocalizedString("DESELECT_ALL"))
+                        } else {
+                            Text(NSLocalizedString("SELECT_ALL"))
+                        }
+                    }
+                    .disabled(viewModel.downloadedManga.isEmpty)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
-                if !viewModel.downloadedManga.isEmpty {
+                if editMode == .active {
+                    HStack {
+                        Button(NSLocalizedString("REMOVE")) {
+                            showingRemoveConfirmation = true
+                        }
+                        .disabled(selectedManga.isEmpty)
+                        DoneButton {
+                            withAnimation {
+                                editMode = .inactive
+                            }
+                        }
+                    }
+                } else if !viewModel.downloadedManga.isEmpty {
                     Menu {
+                        Button {
+                            withAnimation {
+                                editMode = .active
+                            }
+                        } label: {
+                            Label(NSLocalizedString("SELECT"), systemImage: "checkmark.circle")
+                        }
                         Button(role: .destructive, action: viewModel.confirmDeleteAll) {
                             Label(NSLocalizedString("REMOVE_ALL_DOWNLOADS"), systemImage: "trash")
                         }
@@ -95,9 +141,18 @@ struct DownloadsView: View {
                 }
             }
         }
+        .onChange(of: editMode) { mode in
+            guard let navigationController = path.rootViewController?.navigationController
+            else { return }
+            navigationController.setDismissGesturesEnabled(mode != .active)
+            if mode == .inactive {
+                selectedManga = Set()
+            }
+        }
         .animation(.easeInOut(duration: 0.3), value: viewModel.isLoading)
         .animation(.easeInOut(duration: 0.3), value: viewModel.downloadedManga.isEmpty)
         .navigationTitle(NSLocalizedString("DOWNLOADS"))
+        .navigationBarBackButtonHidden(editMode == .active)
         .task {
             await viewModel.loadDownloadedManga()
         }
@@ -109,6 +164,17 @@ struct DownloadsView: View {
         } message: {
             Text(NSLocalizedString("REMOVE_ALL_DOWNLOADS_CONFIRM"))
         }
+        .alert(NSLocalizedString("REMOVE_DOWNLOADS"), isPresented: $showingRemoveConfirmation) {
+            Button(NSLocalizedString("CANCEL"), role: .cancel) { }
+            Button(NSLocalizedString("REMOVE"), role: .destructive) {
+                viewModel.delete(ids: selectedManga)
+                withAnimation {
+                    editMode = .inactive
+                }
+            }
+        } message: {
+            Text(NSLocalizedString("REMOVE_DOWNLOADS_CONFIRM"))
+        }
         .alert(NSLocalizedString("METADATA_DETECTED"), isPresented: $viewModel.showingMigrateNotice) {
             Button(NSLocalizedString("OK"), role: .cancel) {
                 viewModel.migrate()
@@ -116,6 +182,9 @@ struct DownloadsView: View {
         } message: {
             Text(NSLocalizedString("METADATA_DETECTED_TEXT"))
         }
+        .environment(\.editMode, $editMode)
+        .clearsStaleListSelection(selectedManga)
+        .restoresListSelectionOnAppear($selectedManga)
     }
 }
 

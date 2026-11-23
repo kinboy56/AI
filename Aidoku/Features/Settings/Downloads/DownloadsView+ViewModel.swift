@@ -197,6 +197,19 @@ extension DownloadsView.ViewModel {
         }
     }
 
+    func delete(ids: Set<String>) {
+        let selected = downloadedManga.filter { ids.contains($0.id) }
+        withAnimation(.easeOut(duration: 0.3)) {
+            downloadedManga.removeAll { ids.contains($0.id) }
+        }
+
+        Task {
+            for manga in selected {
+                await DownloadManager.shared.deleteChapters(for: manga.mangaIdentifier)
+            }
+        }
+    }
+
     func confirmDeleteAll() {
         showingDeleteAllConfirmation = true
     }

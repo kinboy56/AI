@@ -182,6 +182,27 @@ extension DownloadedMangaView.ViewModel {
         }
     }
 
+    /// Immediate update for user-initiated multi-chapter deletions
+    func delete(chapters ids: Set<String>) {
+        let selected = chapters.filter { ids.contains($0.chapterId) }
+
+        // Optimistically update UI immediately
+        withAnimation(.easeOut(duration: 0.2)) {
+            chapters.removeAll { ids.contains($0.chapterId) }
+        }
+
+        // Perform actual deletion
+        Task {
+            await DownloadManager.shared.delete(chapters: selected.map {
+                .init(
+                    sourceKey: manga.sourceId,
+                    mangaKey: manga.mangaId,
+                    chapterKey: $0.chapterId
+                )
+            })
+        }
+    }
+
     func deleteAllChapters() {
         // Optimistically clear UI immediately
         withAnimation(.easeOut(duration: 0.3)) {
