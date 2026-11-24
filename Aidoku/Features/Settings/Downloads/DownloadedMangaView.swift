@@ -15,7 +15,7 @@ struct DownloadedMangaView: View {
 
     @State private var openChapter: DownloadedChapterInfo?
     @State private var editMode = EditMode.inactive
-    @State private var selectedChapters = Set<String>()
+    @State private var selectedChapters: Set<ChapterIdentifier> = []
     @State private var showingRemoveConfirmation = false
 
     @Namespace private var transitionNamespace
@@ -25,7 +25,7 @@ struct DownloadedMangaView: View {
     }
 
     var body: some View {
-        Group {
+        let content = Group {
             if viewModel.chapters.isEmpty {
                 if viewModel.isLoading {
                     ProgressView(NSLocalizedString("LOADING_ELLIPSIS"))
@@ -39,87 +39,26 @@ struct DownloadedMangaView: View {
         }
         .navigationTitle(viewModel.manga.displayTitle)
         .navigationBarBackButtonHidden(editMode == .active)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                if editMode == .active {
-                    let allSelected = !viewModel.chapters.isEmpty
-                        && viewModel.chapters.allSatisfy { selectedChapters.contains($0.chapterId) }
-                    Button {
-                        if allSelected {
-                            selectedChapters = Set()
-                        } else {
-                            selectedChapters = Set(viewModel.chapters.map { $0.chapterId })
-                        }
-                    } label: {
-                        if allSelected {
-                            Text(NSLocalizedString("DESELECT_ALL"))
-                        } else {
-                            Text(NSLocalizedString("SELECT_ALL"))
-                        }
-                    }
-                    .disabled(viewModel.chapters.isEmpty)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if editMode == .active {
-                    HStack {
-                        Button(NSLocalizedString("REMOVE")) {
-                            showingRemoveConfirmation = true
-                        }
-                        .disabled(selectedChapters.isEmpty)
-                        DoneButton {
-                            withAnimation {
-                                editMode = .inactive
-                            }
-                        }
-                    }
-                } else {
-                    Menu {
-                        Section {
-                            if viewModel.manga.isInLibrary, let source = SourceManager.shared.store.source(for: viewModel.manga.sourceId) {
-                                Button {
-                                    openMangaView(source: source)
-                                } label: {
-                                    Label(NSLocalizedString("VIEW_SERIES"), systemImage: "book")
-                                }
-                            }
-
-                            Button {
-                                if let url = DownloadManager.shared.getMangaDirectoryUrl(identifier: viewModel.manga.mangaIdentifier) {
-                                    UIApplication.shared.open(url)
-                                }
-                            } label: {
-                                Label(NSLocalizedString("VIEW_FILES"), systemImage: "folder")
-                            }
-                        }
-
-                        if !viewModel.chapters.isEmpty {
-                            Section {
-                                Button {
-                                    withAnimation {
-                                        editMode = .active
-                                    }
-                                } label: {
-                                    Label(NSLocalizedString("SELECT"), systemImage: "checkmark.circle")
-                                }
-                                Button(role: .destructive, action: viewModel.confirmDeleteAll) {
-                                    Label(NSLocalizedString("REMOVE_ALL_DOWNLOADS"), systemImage: "trash")
-                                }
-                            }
-                        }
-                    } label: {
-                        MoreIcon()
-                    }
-                }
-            }
-        }
         .onChange(of: editMode) { mode in
             if mode == .inactive {
-                selectedChapters = Set()
+                selectedChapters = []
             }
-            guard let navigationController = path.rootViewController?.navigationController
-            else { return }
-            navigationController.setDismissGesturesEnabled(mode != .active)
+            updateEditingChrome(isEditing: mode == .active, animated: true)
+        }
+        .onDisappear {
+            guard editMode == .active else { return }
+            editMode = .inactive
+            selectedChapters = []
+            updateEditingChrome(isEditing: false, animated: false)
+        }
+        .onChange(of: viewModel.chapters) { chapters in
+            let validIds = Set(chapters.map { chapterIdentifier(for: $0) })
+            selectedChapters = selectedChapters.intersection(validIds)
+            if chapters.isEmpty && editMode == .active {
+                withAnimation {
+                    editMode = .inactive
+                }
+            }
         }
         .task {
             await viewModel.loadChapters()
@@ -134,7 +73,7 @@ struct DownloadedMangaView: View {
             Text(NSLocalizedString("REMOVE_ALL_DOWNLOADS_CONFIRM"))
         }
         .alert(NSLocalizedString("REMOVE_DOWNLOADS"), isPresented: $showingRemoveConfirmation) {
-            Button(NSLocalizedString("CANCEL"), role: .cancel) { }
+            Button(NSLocalizedString("CANCEL"), role: .cancel) {}
             Button(NSLocalizedString("REMOVE"), role: .destructive) {
                 viewModel.delete(chapters: selectedChapters)
                 withAnimation {
@@ -153,6 +92,152 @@ struct DownloadedMangaView: View {
             .ignoresSafeArea()
             .navigationTransitionZoom(sourceID: chapter, in: transitionNamespace)
         }
+
+        if #available(iOS 26.0, *) {
+            content
+                .toolbar {
+                    toolbarContentiOS26
+                }
+        } else {
+            content
+                .toolbar {
+                    toolbarContentBase
+
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        if editMode == .active {
+                            HStack {
+                                Spacer()
+                                removeSelectedButton
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    @ContentBuilder
+    private var toolbarContentBase: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if editMode == .active {
+                let allSelected = !viewModel.chapters.isEmpty
+                    && viewModel.chapters.allSatisfy { selectedChapters.contains(chapterIdentifier(for: $0)) }
+                Button {
+                    if allSelected {
+                        selectedChapters = []
+                    } else {
+                        selectedChapters = Set(viewModel.chapters.map { chapterIdentifier(for: $0) })
+                    }
+                } label: {
+                    if allSelected {
+                        Text(NSLocalizedString("DESELECT_ALL"))
+                    } else {
+                        Text(NSLocalizedString("SELECT_ALL"))
+                    }
+                }
+                .disabled(viewModel.chapters.isEmpty)
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if editMode == .active {
+                DoneButton {
+                    withAnimation {
+                        editMode = .inactive
+                    }
+                }
+            } else {
+                Menu {
+                    Section {
+                        if viewModel.manga.isInLibrary, let source = SourceManager.shared.store.source(for: viewModel.manga.sourceId) {
+                            Button {
+                                openMangaView(source: source)
+                            } label: {
+                                Label(NSLocalizedString("VIEW_SERIES"), systemImage: "book")
+                            }
+                        }
+
+                        Button {
+                            if let url = DownloadManager.shared.getMangaDirectoryUrl(identifier: viewModel.manga.mangaIdentifier) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            Label(NSLocalizedString("VIEW_FILES"), systemImage: "folder")
+                        }
+                    }
+
+                    if !viewModel.chapters.isEmpty {
+                        Section {
+                            Button {
+                                withAnimation {
+                                    editMode = .active
+                                }
+                            } label: {
+                                Label(NSLocalizedString("SELECT"), systemImage: "checkmark.circle")
+                            }
+                            Button(role: .destructive, action: viewModel.confirmDeleteAll) {
+                                Label(NSLocalizedString("REMOVE_ALL_DOWNLOADS"), systemImage: "trash")
+                            }
+                        }
+                    }
+                } label: {
+                    MoreIcon()
+                }
+            }
+        }
+    }
+
+    @available(iOS 26.0, *)
+    @ContentBuilder
+    private var toolbarContentiOS26: some ToolbarContent {
+        toolbarContentBase
+
+        if editMode == .active {
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+
+            ToolbarItem(placement: .bottomBar) {
+                removeSelectedButton
+            }
+        }
+    }
+
+    private var removeSelectedButton: some View {
+        Button(NSLocalizedString("REMOVE")) {
+            showingRemoveConfirmation = true
+        }
+        .disabled(selectedChapters.isEmpty)
+    }
+
+    private func updateEditingChrome(isEditing: Bool, animated: Bool) {
+        guard let navigationController = path.navigationController else { return }
+        navigationController.setDismissGesturesEnabled(!isEditing)
+        func apply() {
+            if isEditing {
+                navigationController.isToolbarHidden = false
+            }
+            navigationController.toolbar.alpha = isEditing ? 1 : 0
+            if #available(iOS 26.0, *) {
+                navigationController.tabBarController?.isTabBarHidden = isEditing
+            }
+        }
+        if animated {
+            UIView.animate(withDuration: 0.3, animations: apply) { _ in
+                if !isEditing && editMode == .inactive {
+                    navigationController.isToolbarHidden = true
+                }
+            }
+        } else {
+            apply()
+            if !isEditing {
+                navigationController.isToolbarHidden = true
+            }
+        }
+    }
+
+    private func chapterIdentifier(for chapter: DownloadedChapterInfo) -> ChapterIdentifier {
+        ChapterIdentifier(
+            sourceKey: viewModel.manga.sourceId,
+            mangaKey: viewModel.manga.mangaId,
+            chapterKey: chapter.chapterId
+        )
     }
 
     private var emptyStateView: some View {
@@ -168,11 +253,11 @@ struct DownloadedMangaView: View {
         List(selection: $selectedChapters) {
             Section {
                 mangaInfoHeader
-                    .tag(0)
             }
 
             Section {
                 ForEach(viewModel.chapters) { chapter in
+                    let identifier = chapterIdentifier(for: chapter)
                     if editMode == .inactive {
                         Button {
                             openChapter = chapter
@@ -181,6 +266,13 @@ struct DownloadedMangaView: View {
                         }
                         .foregroundStyle(.primary)
                         .disabled(chapter.failed)
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                viewModel.deleteChapter(chapter)
+                            } label: {
+                                Label(NSLocalizedString("DELETE"), systemImage: "trash")
+                            }
+                        }
                         .contextMenu {
                             if !chapter.failed {
                                 Button {
@@ -191,13 +283,12 @@ struct DownloadedMangaView: View {
                             }
                         }
                         .matchedTransitionSourcePlease(id: chapter, in: transitionNamespace)
-                        .tag(chapter.chapterId)
+                        .tag(identifier)
                     } else {
                         ChapterRow(chapter: chapter, history: viewModel.readingHistory[chapter.chapterId])
-                            .tag(chapter.chapterId)
+                            .tag(identifier)
                     }
                 }
-                .onDelete(perform: delete)
             } header: {
                 HStack {
                     Text(NSLocalizedString("DOWNLOADED_CHAPTERS"))
@@ -252,14 +343,6 @@ struct DownloadedMangaView: View {
             Spacer()
         }
         .padding(.vertical, 4)
-    }
-
-    private func delete(at offsets: IndexSet) {
-        guard editMode == .inactive else { return }
-        let chapters = offsets.map { viewModel.chapters[$0] }
-        for chapter in chapters {
-            viewModel.deleteChapter(chapter)
-        }
     }
 
     private func formatMangaSubtitle() -> String {

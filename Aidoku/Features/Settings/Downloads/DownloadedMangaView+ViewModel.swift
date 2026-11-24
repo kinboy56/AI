@@ -183,12 +183,13 @@ extension DownloadedMangaView.ViewModel {
     }
 
     /// Immediate update for user-initiated multi-chapter deletions
-    func delete(chapters ids: Set<String>) {
-        let selected = chapters.filter { ids.contains($0.chapterId) }
+    func delete(chapters ids: Set<ChapterIdentifier>) {
+        let chapterKeys = Set(ids.map(\.chapterKey))
+        let selected = chapters.filter { chapterKeys.contains($0.chapterId) }
 
         // Optimistically update UI immediately
         withAnimation(.easeOut(duration: 0.2)) {
-            chapters.removeAll { ids.contains($0.chapterId) }
+            chapters.removeAll { chapterKeys.contains($0.chapterId) }
         }
 
         // Perform actual deletion

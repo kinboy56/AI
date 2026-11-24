@@ -19,6 +19,9 @@ struct BackupsView: View {
     @State private var showImportSheet = false
     @State private var showAutoBackupsSheet = false
     @State private var showImportFailAlert = false
+    @State private var editMode = EditMode.inactive
+    @State private var selectedBackups: Set<URL> = []
+    @State private var showingDeleteConfirmation = false
 
     @EnvironmentObject private var path: NavigationCoordinator
 
@@ -33,21 +36,22 @@ struct BackupsView: View {
     }
 
     var body: some View {
-        let list = List {
+        let list = List(selection: $selectedBackups) {
             Section {
                 ForEach(backupUrls, id: \.self) { url in
                     let backup = backups[url]
 
                     if let backup {
                         backupCell(backup: backup)
+                            .tag(url)
                     } else if invalidBackups.contains(url) {
-                        Text(NSLocalizedString("CORRUPTED_BACKUP"))
+                        corruptedBackupCell(url: url)
+                            .tag(url)
                     } else {
-                        ProgressView()
-                            .progressViewStyle(.circular)
+                        loadingBackupCell(url: url)
+                            .tag(url)
                     }
                 }
-                .onDelete(perform: onDelete)
             } footer: {
                 if !backupUrls.isEmpty {
                     Text(NSLocalizedString("BACKUP_INFO"))
@@ -57,6 +61,7 @@ struct BackupsView: View {
         .animation(.default, value: backupUrls)
         .animation(.default, value: backups)
         .navigationTitle(NSLocalizedString("BACKUPS"))
+        .navigationBarBackButtonHidden(editMode == .active)
         .sheet(isPresented: $showCreateSheet) {
             BackupCreateView()
         }
@@ -92,6 +97,37 @@ struct BackupsView: View {
         } message: {
             Text(NSLocalizedString("BACKUP_IMPORT_FAIL_TEXT"))
         }
+        .alert(NSLocalizedString("DELETE_BACKUPS"), isPresented: $showingDeleteConfirmation) {
+            Button(NSLocalizedString("CANCEL"), role: .cancel) {}
+            Button(NSLocalizedString("DELETE"), role: .destructive) {
+                deleteBackups(urls: selectedBackups)
+                withAnimation {
+                    editMode = .inactive
+                }
+            }
+        } message: {
+            Text(NSLocalizedString("DELETE_BACKUPS_CONFIRM"))
+        }
+        .onChange(of: editMode) { mode in
+            if mode == .inactive {
+                selectedBackups = []
+            }
+            updateEditingChrome(isEditing: mode == .active, animated: true)
+        }
+        .onDisappear {
+            guard editMode == .active else { return }
+            editMode = .inactive
+            selectedBackups = []
+            updateEditingChrome(isEditing: false, animated: false)
+        }
+        .onChange(of: backupUrls) { urls in
+            selectedBackups = selectedBackups.intersection(urls)
+            if urls.isEmpty && editMode == .active {
+                withAnimation {
+                    editMode = .inactive
+                }
+            }
+        }
         .onAppear {
             guard !loadedInitialBackupInfo else { return }
             loadedInitialBackupInfo = true
@@ -101,6 +137,9 @@ struct BackupsView: View {
             backupUrls = BackupManager.backupUrls
             loadBackupInfo()
         }
+        .environment(\.editMode, $editMode)
+        .clearsStaleListSelection(selectedBackups)
+        .restoresListSelectionOnAppear($selectedBackups)
 
         if #available(iOS 26.0, *) {
             list
@@ -110,14 +149,13 @@ struct BackupsView: View {
         } else {
             list
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        autoBackupButton
-                        createBackupButton
-                    }
+                    toolbarContentLegacy
                 }
         }
     }
+}
 
+extension BackupsView {
     var autoBackupButton: some View {
         Button {
             showAutoBackupsSheet = true
@@ -130,6 +168,44 @@ struct BackupsView: View {
             Image(systemName: imageName)
         }
         .matchedTransitionSourcePlease(id: SheetID.autoBackup, in: transitionNamespace)
+    }
+
+    var selectButton: some View {
+        Button {
+            withAnimation {
+                editMode = .active
+            }
+        } label: {
+            Image(systemName: "checkmark.circle")
+        }
+        .accessibilityLabel(NSLocalizedString("SELECT"))
+    }
+
+    @ContentBuilder
+    var selectAllButton: some View {
+        let allSelected = !backupUrls.isEmpty
+            && backupUrls.allSatisfy { selectedBackups.contains($0) }
+        Button {
+            if allSelected {
+                selectedBackups = []
+            } else {
+                selectedBackups = Set(backupUrls)
+            }
+        } label: {
+            if allSelected {
+                Text(NSLocalizedString("DESELECT_ALL"))
+            } else {
+                Text(NSLocalizedString("SELECT_ALL"))
+            }
+        }
+        .disabled(backupUrls.isEmpty)
+    }
+
+    var deleteSelectedButton: some View {
+        Button(NSLocalizedString("DELETE")) {
+            showingDeleteConfirmation = true
+        }
+        .disabled(selectedBackups.isEmpty)
     }
 
     var createBackupButton: some View {
@@ -152,85 +228,190 @@ struct BackupsView: View {
     @available(iOS 26.0, *)
     @ContentBuilder
     var toolbarContentiOS26: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            autoBackupButton
+        ToolbarItem(placement: .topBarLeading) {
+            if editMode == .active {
+                selectAllButton
+            }
         }
 
-        ToolbarSpacer(placement: .topBarTrailing)
+        if editMode == .active {
+            ToolbarItem(placement: .topBarTrailing) {
+                DoneButton {
+                    withAnimation {
+                        editMode = .inactive
+                    }
+                }
+            }
 
-        ToolbarItem(placement: .topBarTrailing) {
-            createBackupButton
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+
+            ToolbarItem(placement: .bottomBar) {
+                deleteSelectedButton
+            }
+        } else {
+            ToolbarItem(placement: .topBarTrailing) {
+                autoBackupButton
+            }
+
+            ToolbarSpacer(placement: .topBarTrailing)
+
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !backupUrls.isEmpty {
+                    selectButton
+                }
+                createBackupButton
+            }
         }
     }
 
+    @ContentBuilder
+    var toolbarContentLegacy: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if editMode == .active {
+                selectAllButton
+            }
+        }
+
+        if editMode == .active {
+            ToolbarItem(placement: .topBarTrailing) {
+                DoneButton {
+                    withAnimation {
+                        editMode = .inactive
+                    }
+                }
+            }
+        } else {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                autoBackupButton
+                if !backupUrls.isEmpty {
+                    selectButton
+                }
+                createBackupButton
+            }
+        }
+
+        ToolbarItemGroup(placement: .bottomBar) {
+            if editMode == .active {
+                HStack {
+                    Spacer()
+                    deleteSelectedButton
+                }
+            }
+        }
+    }
+
+    @ContentBuilder
     func backupCell(backup: BackupInfo) -> some View {
         let url = backup.url
-        return Button {
-            targetRestoreBackup = backup
-        } label: {
-            HStack {
-                let date = DateFormatter.localizedString(from: backup.date, dateStyle: .short, timeStyle: .short)
-                if let name = backup.name {
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text(name)
-                                .lineLimit(1)
-                            if backup.automatic {
-                                automaticBadge
+        if editMode == .inactive {
+            Button {
+                targetRestoreBackup = backup
+            } label: {
+                backupRowContent(backup: backup)
+            }
+            .foregroundStyle(.primary)
+            .swipeActions {
+                Button(role: .destructive) {
+                    deleteBackup(url: url)
+                } label: {
+                    Label(NSLocalizedString("DELETE"), systemImage: "trash")
+                }
+                Button {
+                    showRenamePrompt(targetRenameBackupUrl: url, initialName: backup.name)
+                } label: {
+                    Label(NSLocalizedString("RENAME"), systemImage: "pencil")
+                }
+                .tint(.indigo)
+            }
+            .contextMenu {
+                Button {
+                    targetExportBackup = backup
+                } label: {
+                    Label(NSLocalizedString("EXPORT"), systemImage: "square.and.arrow.up")
+                }
+            }
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onChange(of: targetExportBackup) { newValue in
+                            if newValue == backup {
+                                export(url: url, sourceRect: geo.frame(in: .global))
+                                targetExportBackup = nil
                             }
                         }
-                        Text(date)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
+                }
+            )
+        } else {
+            backupRowContent(backup: backup)
+        }
+    }
+
+    func backupRowContent(backup: BackupInfo) -> some View {
+        HStack {
+            let date = DateFormatter.localizedString(from: backup.date, dateStyle: .short, timeStyle: .short)
+            if let name = backup.name {
+                VStack(alignment: .leading) {
                     HStack {
-                        Text(String(format: NSLocalizedString("BACKUP_%@"), date))
+                        Text(name)
                             .lineLimit(1)
                         if backup.automatic {
                             automaticBadge
                         }
                     }
-                }
-                Spacer()
-                if let size = backup.size {
-                    Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    Text(date)
                         .foregroundStyle(.secondary)
-                        .font(.footnote)
+                }
+            } else {
+                HStack {
+                    Text(String(format: NSLocalizedString("BACKUP_%@"), date))
+                        .lineLimit(1)
+                    if backup.automatic {
+                        automaticBadge
+                    }
                 }
             }
-        }
-        .foregroundStyle(.primary)
-        .swipeActions {
-            Button(role: .destructive) {
-                onDelete(at: IndexSet(integer: backupUrls.firstIndex(of: url)!))
-            } label: {
-                Label(NSLocalizedString("DELETE"), systemImage: "trash")
-            }
-            Button {
-                showRenamePrompt(targetRenameBackupUrl: url, initialName: backup.name)
-            } label: {
-                Label(NSLocalizedString("RENAME"), systemImage: "pencil")
-            }
-            .tint(.indigo)
-        }
-        .contextMenu {
-            Button {
-                targetExportBackup = backup
-            } label: {
-                Label(NSLocalizedString("EXPORT"), systemImage: "square.and.arrow.up")
+            Spacer()
+            if let size = backup.size {
+                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
             }
         }
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onChange(of: targetExportBackup) { newValue in
-                        if newValue == backup {
-                            export(url: url, sourceRect: geo.frame(in: .global))
-                            targetExportBackup = nil
-                        }
+        .contentShape(Rectangle())
+    }
+
+    @ContentBuilder
+    func corruptedBackupCell(url: URL) -> some View {
+        if editMode == .inactive {
+            Text(NSLocalizedString("CORRUPTED_BACKUP"))
+                .swipeActions {
+                    Button(role: .destructive) {
+                        deleteBackup(url: url)
+                    } label: {
+                        Label(NSLocalizedString("DELETE"), systemImage: "trash")
                     }
-            }
-        )
+                }
+        } else {
+            Text(NSLocalizedString("CORRUPTED_BACKUP"))
+        }
+    }
+
+    @ContentBuilder
+    func loadingBackupCell(url: URL) -> some View {
+        if editMode == .inactive {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .swipeActions {
+                    Button(role: .destructive) {
+                        deleteBackup(url: url)
+                    } label: {
+                        Label(NSLocalizedString("DELETE"), systemImage: "trash")
+                    }
+                }
+        } else {
+            ProgressView()
+                .progressViewStyle(.circular)
+        }
     }
 
     var automaticBadge: some View {
@@ -244,15 +425,49 @@ struct BackupsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    func onDelete(at offsets: IndexSet) {
-        for offset in offsets {
-            let url = backupUrls[offset]
-            Task {
+    func deleteBackup(url: URL) {
+        deleteBackups(urls: [url])
+    }
+
+    func deleteBackups(urls: Set<URL>) {
+        let urlsToRemove = backupUrls.filter { urls.contains($0) }
+        guard !urlsToRemove.isEmpty else { return }
+        backupUrls.removeAll { urls.contains($0) }
+        for url in urlsToRemove {
+            backups.removeValue(forKey: url)
+            invalidBackups.remove(url)
+        }
+        Task {
+            for url in urlsToRemove {
                 await BackupManager.shared.removeBackup(url: url)
             }
-            backups.removeValue(forKey: url)
         }
-        backupUrls.remove(atOffsets: offsets)
+    }
+
+    func updateEditingChrome(isEditing: Bool, animated: Bool) {
+        guard let navigationController = path.navigationController else { return }
+        navigationController.setDismissGesturesEnabled(!isEditing)
+        func apply() {
+            if isEditing {
+                navigationController.isToolbarHidden = false
+            }
+            navigationController.toolbar.alpha = isEditing ? 1 : 0
+            if #available(iOS 26.0, *) {
+                navigationController.tabBarController?.isTabBarHidden = isEditing
+            }
+        }
+        if animated {
+            UIView.animate(withDuration: 0.3, animations: apply) { _ in
+                if !isEditing && editMode == .inactive {
+                    navigationController.isToolbarHidden = true
+                }
+            }
+        } else {
+            apply()
+            if !isEditing {
+                navigationController.isToolbarHidden = true
+            }
+        }
     }
 
     func showRenamePrompt(targetRenameBackupUrl: URL, initialName: String?) {

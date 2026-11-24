@@ -686,6 +686,8 @@
 "RESTORE" = "Restore";
 "CREATE_BACKUP" = "Create Backup";
 "IMPORT_BACKUP" = "Import Backup";
+"DELETE_BACKUPS" = "Delete Backups";
+"DELETE_BACKUPS_CONFIRM" = "Delete all selected backups?";
 "LIBRARY_ENTRIES" = "Library Entries";
 "SENSITIVE_SETTINGS" = "Sensitive Settings";
 "NAME" = "Name";

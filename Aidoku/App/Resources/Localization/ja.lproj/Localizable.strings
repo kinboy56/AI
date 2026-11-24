@@ -729,6 +729,8 @@
 "BACKUP_%@" = "%@ をバックアップ";
 "CREATE_BACKUP" = "バックアップを作成";
 "IMPORT_BACKUP" = "バックアップをインポート";
+"DELETE_BACKUPS" = "バックアップを削除";
+"DELETE_BACKUPS_CONFIRM" = "選択したバックアップをすべて削除しますか？";
 "LIBRARY_ENTRIES" = "ライブラリ項目";
 "SENSITIVE_SETTINGS" = "機密設定";
 "NAME" = "名前";

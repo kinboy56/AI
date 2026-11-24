@@ -197,10 +197,13 @@ extension DownloadsView.ViewModel {
         }
     }
 
-    func delete(ids: Set<String>) {
-        let selected = downloadedManga.filter { ids.contains($0.id) }
+    func delete(mangaIds: Set<MangaIdentifier>) {
+        let selected = downloadedManga.filter { mangaIds.contains($0.mangaIdentifier) }
         withAnimation(.easeOut(duration: 0.3)) {
-            downloadedManga.removeAll { ids.contains($0.id) }
+            downloadedManga.removeAll { mangaIds.contains($0.mangaIdentifier) }
+            totalCount = downloadedManga.count
+            let remainingSize = downloadedManga.reduce(Int64(0)) { $0 + $1.totalSize }
+            totalSize = ByteCountFormatter.string(fromByteCount: remainingSize, countStyle: .file)
         }
 
         Task {
