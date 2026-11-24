@@ -42,7 +42,8 @@ struct DownloadedMangaView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 if editMode == .active {
-                    let allSelected = selectedChapters.count == viewModel.chapters.count
+                    let allSelected = !viewModel.chapters.isEmpty
+                        && viewModel.chapters.allSatisfy { selectedChapters.contains($0.chapterId) }
                     Button {
                         if allSelected {
                             selectedChapters = Set()
@@ -113,12 +114,12 @@ struct DownloadedMangaView: View {
             }
         }
         .onChange(of: editMode) { mode in
-            guard let navigationController = path.rootViewController?.navigationController
-            else { return }
-            navigationController.setDismissGesturesEnabled(mode != .active)
             if mode == .inactive {
                 selectedChapters = Set()
             }
+            guard let navigationController = path.rootViewController?.navigationController
+            else { return }
+            navigationController.setDismissGesturesEnabled(mode != .active)
         }
         .task {
             await viewModel.loadChapters()
@@ -167,33 +168,34 @@ struct DownloadedMangaView: View {
         List(selection: $selectedChapters) {
             Section {
                 mangaInfoHeader
+                    .tag(0)
             }
 
             Section {
                 ForEach(viewModel.chapters) { chapter in
-                    Button {
-                        if editMode == .inactive {
+                    if editMode == .inactive {
+                        Button {
                             openChapter = chapter
-                        } else if selectedChapters.contains(chapter.chapterId) {
-                            selectedChapters.remove(chapter.chapterId)
-                        } else {
-                            selectedChapters.insert(chapter.chapterId)
+                        } label: {
+                            ChapterRow(chapter: chapter, history: viewModel.readingHistory[chapter.chapterId])
                         }
-                    } label: {
-                        ChapterRow(chapter: chapter, history: viewModel.readingHistory[chapter.chapterId])
-                    }
-                    .foregroundStyle(.primary)
-                    .disabled(chapter.failed)
-                    .contextMenu {
-                        if !chapter.failed && editMode == .inactive {
-                            Button {
-                                showShareSheet(chapter: chapter)
-                            } label: {
-                                Label(NSLocalizedString("SHARE"), systemImage: "square.and.arrow.up")
+                        .foregroundStyle(.primary)
+                        .disabled(chapter.failed)
+                        .contextMenu {
+                            if !chapter.failed {
+                                Button {
+                                    showShareSheet(chapter: chapter)
+                                } label: {
+                                    Label(NSLocalizedString("SHARE"), systemImage: "square.and.arrow.up")
+                                }
                             }
                         }
+                        .matchedTransitionSourcePlease(id: chapter, in: transitionNamespace)
+                        .tag(chapter.chapterId)
+                    } else {
+                        ChapterRow(chapter: chapter, history: viewModel.readingHistory[chapter.chapterId])
+                            .tag(chapter.chapterId)
                     }
-                    .matchedTransitionSourcePlease(id: chapter, in: transitionNamespace)
                 }
                 .onDelete(perform: delete)
             } header: {
@@ -253,6 +255,7 @@ struct DownloadedMangaView: View {
     }
 
     private func delete(at offsets: IndexSet) {
+        guard editMode == .inactive else { return }
         let chapters = offsets.map { viewModel.chapters[$0] }
         for chapter in chapters {
             viewModel.deleteChapter(chapter)

@@ -51,10 +51,14 @@ struct DownloadsView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                // int tag never matches the Set<String> selection, so the row stays unselectable on every iOS version
+                .tag(0)
             }
 
             ForEach(Settings.downloadSettings, id: \.key) { setting in
                 SettingView(setting: setting)
+                    .tag(0)
+                    .allowsHitTesting(editMode == .inactive)
             }
 
             if viewModel.downloadedManga.isEmpty && viewModel.isLoading {
@@ -63,22 +67,27 @@ struct DownloadsView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .transition(.opacity)
                         .listRowBackground(Color.clear)
+                        .tag(0)
                 }
             } else {
                 ForEach(viewModel.groupedManga, id: \.source) { group in
                     Section(header: Text(group.source)) {
                         ForEach(group.manga) { manga in
-                            NavigationLink(destination: DownloadedMangaView(manga: manga).environmentObject(path)) {
-                                DownloadedMangaRow(manga: manga)
-                            }
-                            .swipeActions {
-                                if editMode == .inactive {
+                            if editMode == .inactive {
+                                NavigationLink(destination: DownloadedMangaView(manga: manga).environmentObject(path)) {
+                                    DownloadedMangaRow(manga: manga)
+                                }
+                                .swipeActions {
                                     Button(role: .destructive) {
                                         viewModel.delete(manga: manga)
                                     } label: {
                                         Label(NSLocalizedString("DELETE"), systemImage: "trash")
                                     }
                                 }
+                                .tag(manga.id)
+                            } else {
+                                DownloadedMangaRow(manga: manga)
+                                    .tag(manga.id)
                             }
                         }
                     }
@@ -93,7 +102,8 @@ struct DownloadsView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 if editMode == .active {
-                    let allSelected = selectedManga.count == viewModel.downloadedManga.count
+                    let allSelected = !viewModel.downloadedManga.isEmpty
+                        && viewModel.downloadedManga.allSatisfy { selectedManga.contains($0.id) }
                     Button {
                         if allSelected {
                             selectedManga = Set()
@@ -142,12 +152,12 @@ struct DownloadsView: View {
             }
         }
         .onChange(of: editMode) { mode in
-            guard let navigationController = path.rootViewController?.navigationController
-            else { return }
-            navigationController.setDismissGesturesEnabled(mode != .active)
             if mode == .inactive {
                 selectedManga = Set()
             }
+            guard let navigationController = path.rootViewController?.navigationController
+            else { return }
+            navigationController.setDismissGesturesEnabled(mode != .active)
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.isLoading)
         .animation(.easeInOut(duration: 0.3), value: viewModel.downloadedManga.isEmpty)
