@@ -197,7 +197,7 @@ struct DownloadedMangaView: View {
                             .tag(chapter.chapterId)
                     }
                 }
-                .onDelete(perform: editMode == .active ? nil : delete)
+                .onDelete(perform: delete)
             } header: {
                 HStack {
                     Text(NSLocalizedString("DOWNLOADED_CHAPTERS"))
@@ -255,6 +255,7 @@ struct DownloadedMangaView: View {
     }
 
     private func delete(at offsets: IndexSet) {
+        guard editMode == .inactive else { return }
         let chapters = offsets.map { viewModel.chapters[$0] }
         for chapter in chapters {
             viewModel.deleteChapter(chapter)
